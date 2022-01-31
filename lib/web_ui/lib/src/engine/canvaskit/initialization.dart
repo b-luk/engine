@@ -13,6 +13,7 @@ import '../embedder.dart';
 import '../safe_browser_api.dart';
 import 'canvaskit_api.dart';
 import 'fonts.dart';
+import 'util.dart';
 
 /// Whether to use CanvasKit as the rendering backend.
 final bool useCanvasKit = FlutterConfiguration.flutterWebAutoDetect
@@ -55,6 +56,13 @@ Future<void> initializeCanvasKit({String? canvasKitBase}) {
   final Completer<void> canvasKitCompleter = Completer<void>();
   if (windowFlutterCanvasKit != null) {
     canvasKit = windowFlutterCanvasKit!;
+    canvasKitCompleter.complete();
+  } else if (useH5vccCanvasKit) {
+    if (h5vcc?.canvasKit == null) {
+      throw CanvasKitError('H5vcc CanvasKit implementation not found.');
+    }
+    canvasKit = h5vcc!.canvasKit!;
+    windowFlutterCanvasKit = canvasKit;
     canvasKitCompleter.complete();
   } else {
     _startDownloadingCanvasKit(canvasKitBase);
