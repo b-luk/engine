@@ -43,78 +43,79 @@ String canvasKitWasmModuleUrl(String file) => _currentCanvasKitBase! + file;
 /// The script element which CanvasKit is loaded from.
 html.ScriptElement? _canvasKitScript;
 
-/// A [Future] which completes when the CanvasKit script has been loaded.
-Future<void>? _canvasKitLoaded;
-
 /// The currently used base URL for loading CanvasKit.
 String? _currentCanvasKitBase;
 
 /// Initialize CanvasKit.
 ///
-/// This calls `CanvasKitInit` and assigns the global [canvasKit] object.
-Future<void> initializeCanvasKit({String? canvasKitBase}) {
-  final Completer<void> canvasKitCompleter = Completer<void>();
+/// Uses a cached or native CanvasKit implemenation if it exists. Otherwise
+/// downloads CanvasKit. Assigns the global [canvasKit] object.
+Future<void> initializeCanvasKit({String? canvasKitBase}) async {
   if (windowFlutterCanvasKit != null) {
     canvasKit = windowFlutterCanvasKit!;
-    canvasKitCompleter.complete();
   } else if (useH5vccCanvasKit) {
     if (h5vcc?.canvasKit == null) {
       throw CanvasKitError('H5vcc CanvasKit implementation not found.');
     }
     canvasKit = h5vcc!.canvasKit!;
     windowFlutterCanvasKit = canvasKit;
-    canvasKitCompleter.complete();
   } else {
-    _startDownloadingCanvasKit(canvasKitBase);
-    _canvasKitLoaded!.then((_) {
-      final CanvasKitInitPromise canvasKitInitPromise =
-          CanvasKitInit(CanvasKitInitOptions(
-        locateFile: allowInterop(
-            (String file, String unusedBase) => canvasKitWasmModuleUrl(file)),
-      ));
-      canvasKitInitPromise.then(allowInterop((CanvasKit ck) {
-        canvasKit = ck;
-        windowFlutterCanvasKit = canvasKit;
-        canvasKitCompleter.complete();
-      }));
-    });
+    canvasKit = await downloadCanvasKit(canvasKitBase: canvasKitBase);
+    windowFlutterCanvasKit = canvasKit;
   }
 
   /// Add a Skia scene host.
   skiaSceneHost = html.Element.tag('flt-scene');
   flutterViewEmbedder.renderScene(skiaSceneHost);
-  return canvasKitCompleter.future;
 }
 
-/// Starts downloading the CanvasKit JavaScript file at [canvasKitBase] and sets
-/// [_canvasKitLoaded].
-void _startDownloadingCanvasKit(String? canvasKitBase) {
+/// Download and initialize the CanvasKit module.
+///
+/// Downloads the CanvasKit JavaScript, then calls `CanvasKitInit` to download
+/// and intialize the CanvasKit wasm.
+Future<CanvasKit> downloadCanvasKit({String? canvasKitBase}) async {
+  await _downloadCanvasKitJs(canvasKitBase: canvasKitBase);
+  final Completer<CanvasKit> canvasKitInitCompleter = Completer<CanvasKit>();
+  final CanvasKitInitPromise canvasKitInitPromise =
+      CanvasKitInit(CanvasKitInitOptions(
+    locateFile: allowInterop(
+        (String file, String unusedBase) => canvasKitWasmModuleUrl(file)),
+  ));
+  canvasKitInitPromise.then(allowInterop((CanvasKit ck) {
+    canvasKitInitCompleter.complete(ck);
+  }));
+  return canvasKitInitCompleter.future;
+}
+
+/// Downloads the CanvasKit JavaScript file at [canvasKitBase].
+Future<void> _downloadCanvasKitJs({String? canvasKitBase}) {
   final String canvasKitJavaScriptUrl = canvasKitBase != null
       ? canvasKitBase + 'canvaskit.js'
       : canvasKitJavaScriptBindingsUrl;
   _currentCanvasKitBase = canvasKitBase ?? canvasKitBuildUrl;
-  // Only reset CanvasKit if it's not already available.
-  if (windowFlutterCanvasKit == null) {
-    _canvasKitScript?.remove();
-    _canvasKitScript = html.ScriptElement();
-    _canvasKitScript!.src = canvasKitJavaScriptUrl;
 
-    final Completer<void> canvasKitLoadCompleter = Completer<void>();
-    _canvasKitLoaded = canvasKitLoadCompleter.future;
+  _canvasKitScript = html.ScriptElement();
+  _canvasKitScript!.src = canvasKitJavaScriptUrl;
 
-    late StreamSubscription<html.Event> loadSubscription;
-    loadSubscription = _canvasKitScript!.onLoad.listen((_) {
-      loadSubscription.cancel();
-      canvasKitLoadCompleter.complete();
-    });
+  final Completer<void> canvasKitLoadCompleter = Completer<void>();
+  late StreamSubscription<html.Event> loadSubscription;
+  loadSubscription = _canvasKitScript!.onLoad.listen((_) {
+    loadSubscription.cancel();
+    canvasKitLoadCompleter.complete();
+  });
 
-    patchCanvasKitModule(_canvasKitScript!);
-  }
+  patchCanvasKitModule(_canvasKitScript!);
+
+  return canvasKitLoadCompleter.future;
 }
 
 /// The Skia font collection.
 SkiaFontCollection get skiaFontCollection => _skiaFontCollection!;
 SkiaFontCollection? _skiaFontCollection;
+
+void debugSetSkiaFontCollection(SkiaFontCollection? value) {
+  _skiaFontCollection = value;
+}
 
 /// Initializes [skiaFontCollection].
 void ensureSkiaFontCollectionInitialized() {
